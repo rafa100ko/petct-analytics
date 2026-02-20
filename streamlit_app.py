@@ -8,10 +8,10 @@ import sqlite3
 from scipy import stats
 
 st.set_page_config(page_title="PET-CT Analytics Pro", layout="wide")
-st.title("📊 PET-CT Analytics | Painel Analítico")
+st.title("📊 PET-CT Analytics | Plataforma Clínica")
 
 # =========================
-# BANCO (SEM RESET)
+# BANCO
 # =========================
 
 conn = sqlite3.connect("petct_database.db", check_same_thread=False)
@@ -124,7 +124,7 @@ def save_data(data):
 # UPLOAD
 # =========================
 
-uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload PDFs de Anamnese", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
     for file in uploaded_files:
@@ -133,7 +133,7 @@ if uploaded_files:
         if saved:
             st.success(f"{data['nome']} salvo com sucesso.")
         else:
-            st.warning(f"{data['nome']} já existe.")
+            st.warning(f"{data['nome']} já existe (duplicado).")
 
 df = pd.read_sql_query("SELECT * FROM exames", conn)
 
@@ -143,102 +143,93 @@ if not df.empty:
     df["imc_class"] = df["imc"].apply(classificar_imc)
     df["hgt_class"] = df["hgt"].apply(classificar_hgt)
 
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes"]
+    )
+
     # =========================
     # DASHBOARD
     # =========================
+    with tab1:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Exames", len(df))
+        col2.metric("Idade Média", round(df["idade"].mean(),2))
+        col3.metric("IMC Médio", round(df["imc"].mean(),2))
+        col4.metric("HGT Médio", round(df["hgt"].mean(),2))
 
-    st.header("📊 Dashboard Executivo")
+        evolucao = df.copy()
+        evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
+        evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
 
-    col1, col2, col3, col4 = st.columns(4)
+        st.subheader("Evolução Mensal")
+        st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
 
-    col1.metric("Total Exames", len(df))
-    col2.metric("Idade Média", round(df["idade"].mean(),2))
-    col3.metric("IMC Médio", round(df["imc"].mean(),2))
-    col4.metric("HGT Médio", round(df["hgt"].mean(),2))
-
-    st.divider()
-
-    # Evolução Temporal
-    evolucao = df.copy()
-    evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
-    evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
-
-    st.subheader("Evolução Mensal")
-    st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
+        st.subheader("Distribuição por Sexo")
+        st.plotly_chart(px.pie(df, names="sexo"), use_container_width=True)
 
     # =========================
     # INDICADORES
     # =========================
-
-    st.header("📈 Indicadores Clínicos")
-
-    colA, colB = st.columns(2)
-
-    with colA:
-        st.subheader("Distribuição IMC")
+    with tab2:
+        st.subheader("Classificação IMC")
         st.plotly_chart(px.pie(df, names="imc_class"), use_container_width=True)
 
-    with colB:
-        st.subheader("Distribuição Glicêmica")
+        st.subheader("Classificação Glicêmica")
         st.plotly_chart(px.pie(df, names="hgt_class"), use_container_width=True)
 
-    st.subheader("Boxplot Idade por Sexo")
-    st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
+        st.subheader("Boxplot Idade por Sexo")
+        st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
+
+        st.subheader("Heatmap Correlação")
+        corr = df[["idade","imc","hgt"]].corr()
+        st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
 
     # =========================
-    # ESTATÍSTICAS COMPLETAS
+    # ESTATÍSTICAS
     # =========================
+    with tab3:
+        st.subheader("Estatísticas Descritivas")
 
-    st.header("📑 Estatísticas")
+        desc = df[["idade","imc","hgt"]].describe().T
+        desc["Mediana"] = df[["idade","imc","hgt"]].median()
+        desc["Desvio Padrão"] = df[["idade","imc","hgt"]].std()
+        st.dataframe(desc)
 
-    st.subheader("Estatísticas Descritivas")
+        st.subheader("Teste t - Idade por Sexo")
+        grupos = df.groupby("sexo")["idade"].apply(list)
 
-    desc = df[["idade","imc","hgt"]].describe().T
-    desc["mediana"] = df[["idade","imc","hgt"]].median()
-    desc["desvio_padrao"] = df[["idade","imc","hgt"]].std()
+        if len(grupos) == 2:
+            t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
+            st.write("p-value:", round(p,4))
+            if p < 0.05:
+                st.success("Diferença significativa")
+            else:
+                st.info("Sem diferença significativa")
 
-    st.dataframe(desc)
+    # =========================
+    # PACIENTES
+    # =========================
+    with tab4:
+        busca = st.text_input("Buscar por nome")
 
-    st.subheader("Correlação")
-
-    numeric_df = df[["idade","imc","hgt"]]
-    corr = numeric_df.corr()
-    st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
-
-    st.subheader("Teste t - Idade por Sexo")
-
-    grupos = df.groupby("sexo")["idade"].apply(list)
-    if len(grupos) == 2:
-        t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
-        st.write("p-value:", round(p,4))
-
-        if p < 0.05:
-            st.success("Diferença significativa entre sexos")
+        if busca:
+            df_view = df[df["nome"].str.contains(busca, case=False)]
         else:
-            st.info("Sem diferença significativa")
+            df_view = df
 
-    # =========================
-    # SUMÁRIO EXECUTIVO
-    # =========================
+        st.dataframe(df_view)
 
-    st.header("📝 Sumário Executivo")
+        st.subheader("Excluir Paciente")
+        paciente_id = st.selectbox("Selecione ID", df_view["id"])
 
-    sexo_pred = df["sexo"].value_counts().idxmax()
-    tendencia = "aumento" if evolucao["exames"].iloc[-1] > evolucao["exames"].iloc[0] else "estabilidade"
+        if st.button("Excluir"):
+            cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
+            conn.commit()
+            st.success("Paciente excluído.")
+            st.experimental_rerun()
 
-    st.write(f"""
-    No período analisado foram realizados {len(df)} exames PET-CT.
-    A idade média foi {round(df['idade'].mean(),2)} anos.
-    O sexo predominante foi {sexo_pred}.
-    Observou-se {tendencia} na demanda ao longo dos meses.
-    """)
-
-    # =========================
-    # EXPORTAÇÃO
-    # =========================
-
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("📥 Baixar Base CSV", csv, "petct_dados.csv")
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Baixar CSV", csv, "petct_dados.csv")
 
 else:
     st.info("Ainda não há exames cadastrados.")
