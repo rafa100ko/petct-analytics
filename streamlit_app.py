@@ -3,17 +3,24 @@ import pandas as pd
 import plotly.express as px
 import pdfplumber
 import re
+import numpy as np
 
 st.set_page_config(page_title="PET-CT Analytics", layout="wide")
 
 st.title("📊 Plataforma de Análise PET-CT")
+
+# =========================
+# FUNÇÃO DE EXTRAÇÃO
+# =========================
 
 def extract_data_from_pdf(file):
     text = ""
 
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
-            text += page.extract_text()
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted
 
     data = {}
 
@@ -51,39 +58,18 @@ def extract_data_from_pdf(file):
     return data
 
 
+# =========================
+# BANCO TEMPORÁRIO
+# =========================
+
+if "database" not in st.session_state:
+    st.session_state.database = pd.DataFrame()
+
 uploaded_files = st.file_uploader(
     "Faça upload das anamneses (PDF)",
     type=["pdf"],
     accept_multiple_files=True
 )
-
-if uploaded_files:
-    data_list = []
-
-    for file in uploaded_files:
-        data = extract_data_from_pdf(file)
-        data_list.append(data)
-
-    df = pd.DataFrame(data_list)
-
-    st.subheader("📌 Visão Geral")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Total de Exames", len(df))
-    col2.metric("Idade Média", round(df["idade"].mean(), 2))
-
-    st.subheader("📊 Distribuição por Sexo")
-    fig_sexo = px.pie(df, names="sexo")
-    st.plotly_chart(fig_sexo)
-
-    st.subheader("📈 Idade dos Pacientes")
-    fig_idade = px.histogram(df, x="idade")
-    st.plotly_chart(fig_idade)
-
-    st.subheader("📄 Dados Extraídos")
-    st.dataframe(df)
-if "database" not in st.session_state:
-    st.session_state.database = pd.DataFrame()
 
 if uploaded_files:
     new_data = []
@@ -93,12 +79,17 @@ if uploaded_files:
         new_data.append(data)
 
     new_df = pd.DataFrame(new_data)
+
     st.session_state.database = pd.concat(
         [st.session_state.database, new_df],
         ignore_index=True
     )
 
 df = st.session_state.database
+
+# =========================
+# DASHBOARD
+# =========================
 
 if not df.empty:
 
@@ -123,27 +114,26 @@ if not df.empty:
     st.subheader("📦 IMC por Sexo")
     fig_box = px.box(df, x="sexo", y="imc")
     st.plotly_chart(fig_box, use_container_width=True)
-st.subheader("📦 IMC por Sexo")
-fig_box = px.box(df, x="sexo", y="imc")
-st.plotly_chart(fig_box, use_container_width=True)
 
-# 🔥 Heatmap de Correlação
-import numpy as np
+    # =========================
+    # HEATMAP DE CORRELAÇÃO
+    # =========================
 
-st.subheader("🔥 Correlação entre Indicadores")
+    st.subheader("🔥 Correlação entre Indicadores")
 
-numeric_df = df.select_dtypes(include=np.number)
+    numeric_df = df.select_dtypes(include=np.number)
 
-if len(numeric_df.columns) > 1:
-    corr = numeric_df.corr()
-    fig_corr = px.imshow(corr, text_auto=True)
-    st.plotly_chart(fig_corr, use_container_width=True)
+    if len(numeric_df.columns) > 1:
+        corr = numeric_df.corr()
+        fig_corr = px.imshow(corr, text_auto=True)
+        st.plotly_chart(fig_corr, use_container_width=True)
 
-st.subheader("📄 Dados Extraídos")
-st.dataframe(df)
     st.subheader("📄 Dados Extraídos")
     st.dataframe(df)
 
     if st.button("🗑 Limpar Base"):
         st.session_state.database = pd.DataFrame()
         st.experimental_rerun()
+
+else:
+    st.info("Faça upload de PDFs para iniciar a análise.")
