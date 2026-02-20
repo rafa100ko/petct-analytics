@@ -82,3 +82,51 @@ if uploaded_files:
 
     st.subheader("📄 Dados Extraídos")
     st.dataframe(df)
+if "database" not in st.session_state:
+    st.session_state.database = pd.DataFrame()
+
+if uploaded_files:
+    new_data = []
+
+    for file in uploaded_files:
+        data = extract_data_from_pdf(file)
+        new_data.append(data)
+
+    new_df = pd.DataFrame(new_data)
+    st.session_state.database = pd.concat(
+        [st.session_state.database, new_df],
+        ignore_index=True
+    )
+
+df = st.session_state.database
+
+if not df.empty:
+
+    st.subheader("📌 Visão Geral")
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total de Exames", len(df))
+    col2.metric("Idade Média", round(df["idade"].mean(), 2))
+    col3.metric("IMC Médio", round(df["imc"].mean(), 2))
+
+    st.divider()
+
+    st.subheader("📊 Distribuição por Sexo")
+    fig_sexo = px.pie(df, names="sexo", title="Distribuição por Sexo")
+    st.plotly_chart(fig_sexo, use_container_width=True)
+
+    st.subheader("📈 Idade dos Pacientes")
+    fig_idade = px.histogram(df, x="idade", nbins=10)
+    st.plotly_chart(fig_idade, use_container_width=True)
+
+    st.subheader("📦 IMC por Sexo")
+    fig_box = px.box(df, x="sexo", y="imc")
+    st.plotly_chart(fig_box, use_container_width=True)
+
+    st.subheader("📄 Dados Extraídos")
+    st.dataframe(df)
+
+    if st.button("🗑 Limpar Base"):
+        st.session_state.database = pd.DataFrame()
+        st.experimental_rerun()
