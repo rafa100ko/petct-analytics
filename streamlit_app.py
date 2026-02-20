@@ -6,20 +6,22 @@ import re
 import numpy as np
 import sqlite3
 from scipy import stats
-import io
 
 st.set_page_config(page_title="PET-CT Analytics Pro", layout="wide")
-st.title("📊 PET-CT Analytics | Plataforma Avançada")
+st.title("📊 PET-CT Analytics | Plataforma Estável")
 
 # =========================
-# BANCO
+# BANCO (RESET AUTOMÁTICO)
 # =========================
 
 conn = sqlite3.connect("petct_database.db", check_same_thread=False)
 cursor = conn.cursor()
 
+# Remove tabela antiga (evita erro de coluna)
+cursor.execute("DROP TABLE IF EXISTS exames")
+
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS exames (
+CREATE TABLE exames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT,
     sexo TEXT,
@@ -144,27 +146,11 @@ if not df.empty:
     df["imc_class"] = df["imc"].apply(classificar_imc)
     df["hgt_class"] = df["hgt"].apply(classificar_hgt)
 
-    # =========================
-    # FILTROS
-    # =========================
-
-    st.sidebar.header("🔎 Filtros")
-    inicio = st.sidebar.date_input("Data inicial", df["data_exame"].min())
-    fim = st.sidebar.date_input("Data final", df["data_exame"].max())
-
-    df = df[(df["data_exame"] >= pd.to_datetime(inicio)) &
-            (df["data_exame"] <= pd.to_datetime(fim))]
-
     tab1, tab2, tab3, tab4 = st.tabs(
         ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes"]
     )
 
-    # =========================
-    # DASHBOARD
-    # =========================
-
     with tab1:
-
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Exames", len(df))
         col2.metric("Idade Média", round(df["idade"].mean(),2))
@@ -174,69 +160,20 @@ if not df.empty:
         evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
         evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
 
-        fig_line = px.line(evolucao, x="mes", y="exames", title="Evolução Mensal")
-        st.plotly_chart(fig_line, use_container_width=True)
-
-        fig_pie = px.pie(df, names="sexo", title="Distribuição por Sexo")
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    # =========================
-    # INDICADORES
-    # =========================
+        st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
 
     with tab2:
-
-        st.subheader("Classificação IMC")
         st.plotly_chart(px.pie(df, names="imc_class"), use_container_width=True)
-
-        st.subheader("Classificação Glicêmica (HGT)")
         st.plotly_chart(px.pie(df, names="hgt_class"), use_container_width=True)
 
-        st.subheader("Boxplot Idade por Sexo")
-        st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
-
-        numeric_df = df.select_dtypes(include=np.number)
-        if len(numeric_df.columns) > 1:
-            corr = numeric_df.corr()
-            fig_corr = px.imshow(corr, text_auto=True)
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-    # =========================
-    # ESTATÍSTICAS
-    # =========================
-
     with tab3:
-
-        st.subheader("Teste t Idade por Sexo")
         grupos = df.groupby("sexo")["idade"].apply(list)
-
         if len(grupos) == 2:
             t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
             st.write("p-value:", round(p,4))
 
-            if p < 0.05:
-                st.success("Diferença estatisticamente significativa")
-            else:
-                st.info("Sem diferença significativa")
-
-    # =========================
-    # PACIENTES
-    # =========================
-
     with tab4:
-
         st.dataframe(df)
-
-        paciente_id = st.selectbox("Selecione ID para excluir", df["id"])
-
-        if st.button("Excluir Paciente"):
-            cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
-            conn.commit()
-            st.success("Paciente removido.")
-            st.experimental_rerun()
-
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Baixar CSV", csv, "dados_petct.csv")
 
 else:
     st.info("Ainda não há exames cadastrados.")
