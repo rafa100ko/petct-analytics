@@ -4,3 +4,5 @@ plotly
 pdfplumber
 numpy
 reportlab
+openpyxl
+scipy
