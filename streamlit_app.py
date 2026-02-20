@@ -8,20 +8,17 @@ import sqlite3
 from scipy import stats
 
 st.set_page_config(page_title="PET-CT Analytics Pro", layout="wide")
-st.title("📊 PET-CT Analytics | Plataforma Estável")
+st.title("📊 PET-CT Analytics | Painel Analítico")
 
 # =========================
-# BANCO (RESET AUTOMÁTICO)
+# BANCO (SEM RESET)
 # =========================
 
 conn = sqlite3.connect("petct_database.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Remove tabela antiga (evita erro de coluna)
-cursor.execute("DROP TABLE IF EXISTS exames")
-
 cursor.execute("""
-CREATE TABLE exames (
+CREATE TABLE IF NOT EXISTS exames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT,
     sexo TEXT,
@@ -45,7 +42,7 @@ conn.commit()
 # =========================
 
 def classificar_imc(imc):
-    if imc is None:
+    if pd.isna(imc):
         return None
     if imc < 18.5:
         return "Baixo peso"
@@ -57,7 +54,7 @@ def classificar_imc(imc):
         return "Obesidade"
 
 def classificar_hgt(hgt):
-    if hgt is None:
+    if pd.isna(hgt):
         return None
     if hgt < 70:
         return "Hipoglicemia"
@@ -67,7 +64,7 @@ def classificar_hgt(hgt):
         return "Hiperglicemia"
 
 # =========================
-# EXTRAÇÃO PDF
+# EXTRAÇÃO
 # =========================
 
 def extract_data(file):
@@ -104,7 +101,7 @@ def extract_data(file):
     data["hgt"] = float(hgt.group(1)) if hgt else None
 
     data["diabetes"] = "Sim" if "Diabetes: SIM" in text else "Não"
-    data["quimioterapia"] = "Sim" if "FEZ 4 SESSÕES" in text else "Não"
+    data["quimioterapia"] = "Sim" if "FEZ" in text else "Não"
     data["radioterapia"] = "Sim" if "Radioterapia: SIM" in text else "Não"
     data["reestadiamento"] = "Sim" if "REESTADIAMENTO" in text else "Não"
 
@@ -136,7 +133,7 @@ if uploaded_files:
         if saved:
             st.success(f"{data['nome']} salvo com sucesso.")
         else:
-            st.warning(f"{data['nome']} já existe (duplicação evitada).")
+            st.warning(f"{data['nome']} já existe.")
 
 df = pd.read_sql_query("SELECT * FROM exames", conn)
 
@@ -146,34 +143,102 @@ if not df.empty:
     df["imc_class"] = df["imc"].apply(classificar_imc)
     df["hgt_class"] = df["hgt"].apply(classificar_hgt)
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes"]
-    )
+    # =========================
+    # DASHBOARD
+    # =========================
 
-    with tab1:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Exames", len(df))
-        col2.metric("Idade Média", round(df["idade"].mean(),2))
-        col3.metric("IMC Médio", round(df["imc"].mean(),2))
+    st.header("📊 Dashboard Executivo")
 
-        evolucao = df.copy()
-        evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
-        evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
+    col1, col2, col3, col4 = st.columns(4)
 
-        st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
+    col1.metric("Total Exames", len(df))
+    col2.metric("Idade Média", round(df["idade"].mean(),2))
+    col3.metric("IMC Médio", round(df["imc"].mean(),2))
+    col4.metric("HGT Médio", round(df["hgt"].mean(),2))
 
-    with tab2:
+    st.divider()
+
+    # Evolução Temporal
+    evolucao = df.copy()
+    evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
+    evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
+
+    st.subheader("Evolução Mensal")
+    st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
+
+    # =========================
+    # INDICADORES
+    # =========================
+
+    st.header("📈 Indicadores Clínicos")
+
+    colA, colB = st.columns(2)
+
+    with colA:
+        st.subheader("Distribuição IMC")
         st.plotly_chart(px.pie(df, names="imc_class"), use_container_width=True)
+
+    with colB:
+        st.subheader("Distribuição Glicêmica")
         st.plotly_chart(px.pie(df, names="hgt_class"), use_container_width=True)
 
-    with tab3:
-        grupos = df.groupby("sexo")["idade"].apply(list)
-        if len(grupos) == 2:
-            t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
-            st.write("p-value:", round(p,4))
+    st.subheader("Boxplot Idade por Sexo")
+    st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
 
-    with tab4:
-        st.dataframe(df)
+    # =========================
+    # ESTATÍSTICAS COMPLETAS
+    # =========================
+
+    st.header("📑 Estatísticas")
+
+    st.subheader("Estatísticas Descritivas")
+
+    desc = df[["idade","imc","hgt"]].describe().T
+    desc["mediana"] = df[["idade","imc","hgt"]].median()
+    desc["desvio_padrao"] = df[["idade","imc","hgt"]].std()
+
+    st.dataframe(desc)
+
+    st.subheader("Correlação")
+
+    numeric_df = df[["idade","imc","hgt"]]
+    corr = numeric_df.corr()
+    st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
+
+    st.subheader("Teste t - Idade por Sexo")
+
+    grupos = df.groupby("sexo")["idade"].apply(list)
+    if len(grupos) == 2:
+        t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
+        st.write("p-value:", round(p,4))
+
+        if p < 0.05:
+            st.success("Diferença significativa entre sexos")
+        else:
+            st.info("Sem diferença significativa")
+
+    # =========================
+    # SUMÁRIO EXECUTIVO
+    # =========================
+
+    st.header("📝 Sumário Executivo")
+
+    sexo_pred = df["sexo"].value_counts().idxmax()
+    tendencia = "aumento" if evolucao["exames"].iloc[-1] > evolucao["exames"].iloc[0] else "estabilidade"
+
+    st.write(f"""
+    No período analisado foram realizados {len(df)} exames PET-CT.
+    A idade média foi {round(df['idade'].mean(),2)} anos.
+    O sexo predominante foi {sexo_pred}.
+    Observou-se {tendencia} na demanda ao longo dos meses.
+    """)
+
+    # =========================
+    # EXPORTAÇÃO
+    # =========================
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Baixar Base CSV", csv, "petct_dados.csv")
 
 else:
     st.info("Ainda não há exames cadastrados.")
