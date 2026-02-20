@@ -147,9 +147,7 @@ if not df.empty:
         ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes"]
     )
 
-    # =========================
     # DASHBOARD
-    # =========================
     with tab1:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total Exames", len(df))
@@ -161,75 +159,48 @@ if not df.empty:
         evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
         evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
 
-        st.subheader("Evolução Mensal")
         st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
-
-        st.subheader("Distribuição por Sexo")
         st.plotly_chart(px.pie(df, names="sexo"), use_container_width=True)
 
-    # =========================
     # INDICADORES
-    # =========================
     with tab2:
-        st.subheader("Classificação IMC")
         st.plotly_chart(px.pie(df, names="imc_class"), use_container_width=True)
-
-        st.subheader("Classificação Glicêmica")
         st.plotly_chart(px.pie(df, names="hgt_class"), use_container_width=True)
-
-        st.subheader("Boxplot Idade por Sexo")
         st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
 
-        st.subheader("Heatmap Correlação")
         corr = df[["idade","imc","hgt"]].corr()
         st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
 
-    # =========================
     # ESTATÍSTICAS
-    # =========================
     with tab3:
-        st.subheader("Estatísticas Descritivas")
-
         desc = df[["idade","imc","hgt"]].describe().T
         desc["Mediana"] = df[["idade","imc","hgt"]].median()
         desc["Desvio Padrão"] = df[["idade","imc","hgt"]].std()
         st.dataframe(desc)
 
-        st.subheader("Teste t - Idade por Sexo")
         grupos = df.groupby("sexo")["idade"].apply(list)
-
         if len(grupos) == 2:
             t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
             st.write("p-value:", round(p,4))
-            if p < 0.05:
-                st.success("Diferença significativa")
-            else:
-                st.info("Sem diferença significativa")
 
-    # =========================
     # PACIENTES
-    # =========================
     with tab4:
-        busca = st.text_input("Buscar por nome")
-
-        if busca:
-            df_view = df[df["nome"].str.contains(busca, case=False)]
-        else:
-            df_view = df
-
-        st.dataframe(df_view)
+        st.dataframe(df)
 
         st.subheader("Excluir Paciente")
-        paciente_id = st.selectbox("Selecione ID", df_view["id"])
 
-        if st.button("Excluir"):
-            cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
-            conn.commit()
-            st.success("Paciente excluído.")
-            st.experimental_rerun()
+        paciente_id = st.selectbox("Selecione ID", df["id"])
 
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Baixar CSV", csv, "petct_dados.csv")
+        confirmar = st.checkbox("Confirmar exclusão")
+
+        if st.button("Excluir Paciente"):
+            if confirmar:
+                cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
+                conn.commit()
+                st.success("Paciente excluído com sucesso.")
+                st.rerun()
+            else:
+                st.warning("Marque a confirmação antes de excluir.")
 
 else:
     st.info("Ainda não há exames cadastrados.")
