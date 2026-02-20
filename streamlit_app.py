@@ -123,7 +123,24 @@ if not df.empty:
     st.subheader("📦 IMC por Sexo")
     fig_box = px.box(df, x="sexo", y="imc")
     st.plotly_chart(fig_box, use_container_width=True)
+st.subheader("📦 IMC por Sexo")
+fig_box = px.box(df, x="sexo", y="imc")
+st.plotly_chart(fig_box, use_container_width=True)
 
+# 🔥 Heatmap de Correlação
+import numpy as np
+
+st.subheader("🔥 Correlação entre Indicadores")
+
+numeric_df = df.select_dtypes(include=np.number)
+
+if len(numeric_df.columns) > 1:
+    corr = numeric_df.corr()
+    fig_corr = px.imshow(corr, text_auto=True)
+    st.plotly_chart(fig_corr, use_container_width=True)
+
+st.subheader("📄 Dados Extraídos")
+st.dataframe(df)
     st.subheader("📄 Dados Extraídos")
     st.dataframe(df)
 
