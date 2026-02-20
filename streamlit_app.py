@@ -9,13 +9,15 @@ from datetime import datetime
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
+from scipy import stats
+import io
 
-st.set_page_config(page_title="PET-CT Analytics", layout="wide")
+st.set_page_config(page_title="PET-CT Analytics Pro", layout="wide")
 
-st.title("📊 Plataforma Completa de Análise PET-CT")
+st.title("📊 Plataforma Avançada de Análise PET-CT")
 
 # =========================
-# BANCO SQLITE (PERSISTENTE)
+# BANCO SQLITE
 # =========================
 
 conn = sqlite3.connect("petct_database.db", check_same_thread=False)
@@ -35,7 +37,6 @@ CREATE TABLE IF NOT EXISTS exames (
     reestadiamento TEXT
 )
 """)
-
 conn.commit()
 
 # =========================
@@ -44,7 +45,6 @@ conn.commit()
 
 def extract_data_from_pdf(file):
     text = ""
-
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
             extracted = page.extract_text()
@@ -110,7 +110,7 @@ def save_to_database(data):
 # =========================
 
 uploaded_files = st.file_uploader(
-    "Faça upload das anamneses (PDF)",
+    "Upload de Anamneses PET-CT (PDF)",
     type=["pdf"],
     accept_multiple_files=True
 )
@@ -119,7 +119,7 @@ if uploaded_files:
     for file in uploaded_files:
         data = extract_data_from_pdf(file)
         save_to_database(data)
-    st.success("Dados salvos permanentemente!")
+    st.success("Exames salvos com sucesso!")
 
 # =========================
 # CARREGAR DADOS
@@ -136,80 +136,104 @@ if not df.empty:
     data_inicio = st.sidebar.date_input("Data inicial", df["data_exame"].min())
     data_fim = st.sidebar.date_input("Data final", df["data_exame"].max())
 
-    df_filtrado = df[
+    df = df[
         (df["data_exame"] >= pd.to_datetime(data_inicio)) &
         (df["data_exame"] <= pd.to_datetime(data_fim))
     ]
 
-    st.subheader("📌 Visão Geral")
+    # =========================
+    # VISÃO GERAL
+    # =========================
 
     col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total de Exames", len(df_filtrado))
-    col2.metric("Idade Média", round(df_filtrado["idade"].mean(), 2))
-    col3.metric("IMC Médio", round(df_filtrado["imc"].mean(), 2))
+    col1.metric("Total de Exames", len(df))
+    col2.metric("Idade Média", round(df["idade"].mean(), 2))
+    col3.metric("IMC Médio", round(df["imc"].mean(), 2))
 
     st.divider()
 
-    st.subheader("📊 Distribuição por Sexo")
-    fig_sexo = px.pie(df_filtrado, names="sexo")
+    # =========================
+    # GRÁFICOS
+    # =========================
+
+    fig_sexo = px.pie(df, names="sexo", title="Distribuição por Sexo")
     st.plotly_chart(fig_sexo, use_container_width=True)
 
-    st.subheader("📈 Evolução Temporal")
-    evolucao = df_filtrado.groupby(df_filtrado["data_exame"].dt.to_period("M")).size().reset_index(name="quantidade")
+    evolucao = df.groupby(df["data_exame"].dt.to_period("M")).size().reset_index(name="quantidade")
     evolucao["data_exame"] = evolucao["data_exame"].astype(str)
-    fig_line = px.line(evolucao, x="data_exame", y="quantidade")
+    fig_line = px.line(evolucao, x="data_exame", y="quantidade", title="Evolução Temporal")
     st.plotly_chart(fig_line, use_container_width=True)
 
-    st.subheader("🔥 Correlação")
-    numeric_df = df_filtrado.select_dtypes(include=np.number)
-    if len(numeric_df.columns) > 1:
-        corr = numeric_df.corr()
-        fig_corr = px.imshow(corr, text_auto=True)
-        st.plotly_chart(fig_corr, use_container_width=True)
-
-    st.subheader("📄 Dados Filtrados")
-    st.dataframe(df_filtrado)
+    fig_box = px.box(df, x="sexo", y="idade", title="Idade por Sexo")
+    st.plotly_chart(fig_box, use_container_width=True)
 
     # =========================
-    # EXPORTAR CSV
+    # TESTE ESTATÍSTICO
     # =========================
 
-    csv = df_filtrado.to_csv(index=False).encode("utf-8")
+    st.subheader("🔬 Teste Estatístico (Idade por Sexo)")
+
+    grupos = df.groupby("sexo")["idade"].apply(list)
+
+    if len(grupos) == 2:
+        grupo1, grupo2 = grupos.iloc[0], grupos.iloc[1]
+        t_stat, p_value = stats.ttest_ind(grupo1, grupo2)
+        st.write(f"p-value: {round(p_value,4)}")
+
+        if p_value < 0.05:
+            st.success("Diferença estatisticamente significativa (p < 0.05)")
+        else:
+            st.info("Não houve diferença estatisticamente significativa")
+
+    # =========================
+    # SUMÁRIO EXECUTIVO AUTOMÁTICO
+    # =========================
+
+    st.subheader("📑 Sumário Executivo Automático")
+
+    sexo_pred = df["sexo"].value_counts().idxmax()
+    resumo = f"""
+    No período analisado foram realizados {len(df)} exames PET-CT.
+    A idade média foi {round(df['idade'].mean(),2)} anos.
+    O sexo predominante foi {sexo_pred}.
+    """
+
+    st.write(resumo)
+
+    # =========================
+    # EXPORTAÇÃO CSV E EXCEL
+    # =========================
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Baixar CSV", csv, "dados_petct.csv", "text/csv")
+
+    excel_buffer = io.BytesIO()
+    df.to_excel(excel_buffer, index=False)
     st.download_button(
-        "📥 Baixar CSV",
-        csv,
-        "dados_petct.csv",
-        "text/csv"
+        "📥 Baixar Excel",
+        excel_buffer.getvalue(),
+        "dados_petct.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
     # =========================
     # RELATÓRIO PDF
     # =========================
 
-    if st.button("📑 Gerar Relatório PDF"):
+    if st.button("📄 Gerar Relatório PDF"):
         filename = "relatorio_petct.pdf"
         doc = SimpleDocTemplate(filename)
         elements = []
         styles = getSampleStyleSheet()
 
-        summary = f"""
-        No período selecionado foram realizados {len(df_filtrado)} exames PET-CT.
-        A idade média foi {round(df_filtrado['idade'].mean(),2)} anos.
-        """
-
-        elements.append(Paragraph("Relatório PET-CT", styles["Heading1"]))
+        elements.append(Paragraph("RELATÓRIO PET-CT", styles["Heading1"]))
         elements.append(Spacer(1, 0.5 * inch))
-        elements.append(Paragraph(summary, styles["Normal"]))
+        elements.append(Paragraph(resumo, styles["Normal"]))
 
         doc.build(elements)
 
         with open(filename, "rb") as f:
-            st.download_button(
-                "📥 Baixar Relatório PDF",
-                f,
-                file_name="relatorio_petct.pdf"
-            )
+            st.download_button("📥 Baixar PDF", f, file_name="relatorio_petct.pdf")
 
 else:
     st.info("Ainda não há exames cadastrados.")
