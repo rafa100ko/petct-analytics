@@ -1,6 +1,84 @@
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+import pdfplumber
+import re
 
-st.title("🎈 My new app")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
+st.set_page_config(page_title="PET-CT Analytics", layout="wide")
+
+st.title("📊 Plataforma de Análise PET-CT")
+
+def extract_data_from_pdf(file):
+    text = ""
+
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text()
+
+    data = {}
+
+    nome = re.search(r"Paciente:\s*(.+)", text)
+    data["nome"] = nome.group(1).strip() if nome else None
+
+    sexo = re.search(r"\b(FEMININO|MASCULINO)\b", text)
+    if sexo:
+        data["sexo"] = "F" if sexo.group(1) == "FEMININO" else "M"
+    else:
+        data["sexo"] = None
+
+    idade = re.search(r"(\d+)\s+Anos", text)
+    data["idade"] = int(idade.group(1)) if idade else None
+
+    data_exame = re.search(r"(\d{2}/\d{2}/\d{4})", text)
+    data["data_exame"] = data_exame.group(1) if data_exame else None
+
+    peso = re.search(r"(\d+)Peso", text)
+    data["peso"] = int(peso.group(1)) if peso else None
+
+    altura = re.search(r"Altura:\s*(\d+)", text)
+    data["altura"] = int(altura.group(1)) if altura else None
+
+    imc = re.search(r"IMC:\s*(\d+\.?\d*)", text)
+    data["imc"] = float(imc.group(1)) if imc else None
+
+    if "CÂNCER DE PULMÃO" in text:
+        data["tipo_cancer"] = "Pulmão"
+    else:
+        data["tipo_cancer"] = None
+
+    data["reestadiamento"] = "Sim" if "REESTADIAMENTO" in text else "Não"
+
+    return data
+
+
+uploaded_files = st.file_uploader(
+    "Faça upload das anamneses (PDF)",
+    type=["pdf"],
+    accept_multiple_files=True
 )
+
+if uploaded_files:
+    data_list = []
+
+    for file in uploaded_files:
+        data = extract_data_from_pdf(file)
+        data_list.append(data)
+
+    df = pd.DataFrame(data_list)
+
+    st.subheader("📌 Visão Geral")
+
+    col1, col2 = st.columns(2)
+    col1.metric("Total de Exames", len(df))
+    col2.metric("Idade Média", round(df["idade"].mean(), 2))
+
+    st.subheader("📊 Distribuição por Sexo")
+    fig_sexo = px.pie(df, names="sexo")
+    st.plotly_chart(fig_sexo)
+
+    st.subheader("📈 Idade dos Pacientes")
+    fig_idade = px.histogram(df, x="idade")
+    st.plotly_chart(fig_idade)
+
+    st.subheader("📄 Dados Extraídos")
+    st.dataframe(df)
