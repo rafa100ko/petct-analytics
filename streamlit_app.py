@@ -6,9 +6,13 @@ import re
 import numpy as np
 import sqlite3
 from scipy import stats
+import io
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
 
 st.set_page_config(page_title="PET-CT Analytics Pro", layout="wide")
-st.title("📊 PET-CT Analytics | Plataforma Clínica")
+st.title("📊 PET-CT Analytics | Plataforma Acadêmica Completa")
 
 # =========================
 # BANCO
@@ -42,26 +46,17 @@ conn.commit()
 # =========================
 
 def classificar_imc(imc):
-    if pd.isna(imc):
-        return None
-    if imc < 18.5:
-        return "Baixo peso"
-    elif imc < 25:
-        return "Normal"
-    elif imc < 30:
-        return "Sobrepeso"
-    else:
-        return "Obesidade"
+    if pd.isna(imc): return None
+    if imc < 18.5: return "Baixo peso"
+    elif imc < 25: return "Normal"
+    elif imc < 30: return "Sobrepeso"
+    else: return "Obesidade"
 
 def classificar_hgt(hgt):
-    if pd.isna(hgt):
-        return None
-    if hgt < 70:
-        return "Hipoglicemia"
-    elif hgt <= 140:
-        return "Normal"
-    else:
-        return "Hiperglicemia"
+    if pd.isna(hgt): return None
+    if hgt < 70: return "Hipoglicemia"
+    elif hgt <= 140: return "Normal"
+    else: return "Hiperglicemia"
 
 # =========================
 # EXTRAÇÃO
@@ -79,7 +74,6 @@ def extract_data(file):
 
     nome = re.search(r"Paciente:\s*(.+)", text)
     data["nome"] = nome.group(1).strip() if nome else None
-
     data["sexo"] = "F" if "FEMININO" in text else "M"
 
     idade = re.search(r"(\d+)\s+Anos", text)
@@ -124,16 +118,16 @@ def save_data(data):
 # UPLOAD
 # =========================
 
-uploaded_files = st.file_uploader("Upload PDFs de Anamnese", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
     for file in uploaded_files:
         data = extract_data(file)
         saved = save_data(data)
         if saved:
-            st.success(f"{data['nome']} salvo com sucesso.")
+            st.success(f"{data['nome']} salvo.")
         else:
-            st.warning(f"{data['nome']} já existe (duplicado).")
+            st.warning(f"{data['nome']} já existe.")
 
 df = pd.read_sql_query("SELECT * FROM exames", conn)
 
@@ -143,64 +137,106 @@ if not df.empty:
     df["imc_class"] = df["imc"].apply(classificar_imc)
     df["hgt_class"] = df["hgt"].apply(classificar_hgt)
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes"]
+    # =========================
+    # FILTROS
+    # =========================
+
+    st.sidebar.header("🔎 Filtros")
+    inicio = st.sidebar.date_input("Data inicial", df["data_exame"].min())
+    fim = st.sidebar.date_input("Data final", df["data_exame"].max())
+    sexo_filtro = st.sidebar.multiselect("Sexo", df["sexo"].unique(), df["sexo"].unique())
+    diabetes_filtro = st.sidebar.multiselect("Diabetes", df["diabetes"].unique(), df["diabetes"].unique())
+
+    df = df[
+        (df["data_exame"] >= pd.to_datetime(inicio)) &
+        (df["data_exame"] <= pd.to_datetime(fim)) &
+        (df["sexo"].isin(sexo_filtro)) &
+        (df["diabetes"].isin(diabetes_filtro))
+    ]
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 Dashboard", "📈 Indicadores", "📑 Estatísticas", "👥 Pacientes", "📄 Relatório"]
     )
 
-    # DASHBOARD
+    # ================= DASHBOARD =================
     with tab1:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Exames", len(df))
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total", len(df))
         col2.metric("Idade Média", round(df["idade"].mean(),2))
         col3.metric("IMC Médio", round(df["imc"].mean(),2))
-        col4.metric("HGT Médio", round(df["hgt"].mean(),2))
 
         evolucao = df.copy()
         evolucao["mes"] = evolucao["data_exame"].dt.strftime("%Y-%m")
         evolucao = evolucao.groupby("mes").size().reset_index(name="exames")
 
         st.plotly_chart(px.line(evolucao, x="mes", y="exames"), use_container_width=True)
-        st.plotly_chart(px.pie(df, names="sexo"), use_container_width=True)
 
-    # INDICADORES
+    # ================= INDICADORES =================
     with tab2:
         st.plotly_chart(px.pie(df, names="imc_class"), use_container_width=True)
         st.plotly_chart(px.pie(df, names="hgt_class"), use_container_width=True)
-        st.plotly_chart(px.box(df, x="sexo", y="idade"), use_container_width=True)
+
+        var_x = st.selectbox("Variável X", ["idade","imc","hgt"])
+        var_y = st.selectbox("Variável Y", ["idade","imc","hgt"])
+
+        st.plotly_chart(px.scatter(df, x=var_x, y=var_y, color="sexo"), use_container_width=True)
 
         corr = df[["idade","imc","hgt"]].corr()
         st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
 
-    # ESTATÍSTICAS
+    # ================= ESTATÍSTICAS =================
     with tab3:
         desc = df[["idade","imc","hgt"]].describe().T
         desc["Mediana"] = df[["idade","imc","hgt"]].median()
         desc["Desvio Padrão"] = df[["idade","imc","hgt"]].std()
+        desc["IC95_inf"] = desc["mean"] - 1.96*(desc["std"]/np.sqrt(len(df)))
+        desc["IC95_sup"] = desc["mean"] + 1.96*(desc["std"]/np.sqrt(len(df)))
         st.dataframe(desc)
 
         grupos = df.groupby("sexo")["idade"].apply(list)
         if len(grupos) == 2:
             t_stat, p = stats.ttest_ind(grupos.iloc[0], grupos.iloc[1])
-            st.write("p-value:", round(p,4))
+            st.write("Teste t p-value:", round(p,4))
 
-    # PACIENTES
+        if len(df["sexo"].unique()) > 2:
+            grupos = [df[df["sexo"]==g]["idade"] for g in df["sexo"].unique()]
+            f, p = stats.f_oneway(*grupos)
+            st.write("ANOVA p-value:", round(p,4))
+
+    # ================= PACIENTES =================
     with tab4:
         st.dataframe(df)
+        paciente_id = st.selectbox("Excluir ID", df["id"])
+        if st.button("Excluir"):
+            cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
+            conn.commit()
+            st.success("Excluído.")
+            st.rerun()
 
-        st.subheader("Excluir Paciente")
+    # ================= RELATÓRIO =================
+    with tab5:
+        sexo_pred = df["sexo"].value_counts().idxmax()
+        resumo = f"""
+        Foram analisados {len(df)} exames PET-CT.
+        Idade média: {round(df['idade'].mean(),2)} anos.
+        Sexo predominante: {sexo_pred}.
+        """
 
-        paciente_id = st.selectbox("Selecione ID", df["id"])
+        st.write(resumo)
 
-        confirmar = st.checkbox("Confirmar exclusão")
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("Baixar CSV", csv, "dados_petct.csv")
 
-        if st.button("Excluir Paciente"):
-            if confirmar:
-                cursor.execute("DELETE FROM exames WHERE id = ?", (int(paciente_id),))
-                conn.commit()
-                st.success("Paciente excluído com sucesso.")
-                st.rerun()
-            else:
-                st.warning("Marque a confirmação antes de excluir.")
+        if st.button("Gerar PDF"):
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer)
+            elements = []
+            styles = getSampleStyleSheet()
+            elements.append(Paragraph("Relatório PET-CT", styles["Heading1"]))
+            elements.append(Spacer(1, 0.5 * inch))
+            elements.append(Paragraph(resumo, styles["Normal"]))
+            doc.build(elements)
+            st.download_button("Download PDF", buffer.getvalue(), "relatorio.pdf")
 
 else:
-    st.info("Ainda não há exames cadastrados.")
+    st.info("Nenhum exame cadastrado.")
